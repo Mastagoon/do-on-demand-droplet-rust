@@ -2,8 +2,36 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env::var;
 
+const DROPLETS_URL: &str = "https://api.digitalocean.com/v2/droplets";
+const CREATE_DROPLET_URL: &str = "https://api.digitalocean.com/v2/droplets";
+const DELETE_DROPLET_URL: &str = "https://api.digitalocean.com/v2/droplets/";
+const SNAPSHOTS_URL: &str = "https://api.digitalocean.com/v2/snapshots";
+
 #[derive(Serialize, Deserialize, Debug)]
-struct Droplet {
+pub struct Action {
+    r#type: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Snapshot {
+    id: String,
+    name: String,
+    created_at: String,
+    regions: Vec<String>,
+    resource_id: String,
+    resource_type: String,
+    min_disk_size: u32,
+    size_gigabytes: f32,
+    tags: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct AllSnapshotsResponse {
+    snapshots: Vec<Snapshot>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Droplet {
     id: u32,
     name: String,
     memory: u32,
@@ -25,6 +53,11 @@ struct Droplet {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+struct GetDropletResponse {
+    droplet: Droplet,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 struct DropletCreate {
     name: String,
     region: String,
@@ -42,10 +75,6 @@ pub struct AllDropletsResponse {
 struct CreateDropletResponse {
     droplet: Droplet,
 }
-
-const GET_ALL_DROPLETS_URL: &str = "https://api.digitalocean.com/v2/droplets";
-const CREATE_DROPLET_URL: &str = "https://api.digitalocean.com/v2/droplets";
-const DELETE_DROPLET_URL: &str = "https://api.digitalocean.com/v2/droplets/";
 
 struct ApiResponse {
     status: u32,
@@ -126,15 +155,15 @@ async fn delete(url: &str) -> ApiResponse {
     };
 }
 
-pub async fn get_all_droplets() -> AllDropletsResponse {
-    let result = get(GET_ALL_DROPLETS_URL, None).await;
+pub async fn get_all_droplets() -> Vec<Droplet> {
+    let result = get(DROPLETS_URL, None).await;
     if result.error.is_some() {
         println!("Error: {}", result.error.unwrap());
-        return AllDropletsResponse { droplets: vec![] };
+        return Vec::new();
     }
     let data: AllDropletsResponse = serde_json::from_value(result.data.unwrap()).unwrap();
     println!("{:?}", data);
-    data
+    data.droplets
 }
 
 pub async fn create_droplet() -> bool {
@@ -158,4 +187,64 @@ pub async fn create_droplet() -> bool {
     let data: CreateDropletResponse = serde_json::from_value(result.data.unwrap()).unwrap();
     println!("{:?}", data);
     true
+}
+
+pub async fn drop_droplet(id: &str) -> bool {
+    let result = delete(&[DELETE_DROPLET_URL, id].join("")).await;
+    if result.error.is_some() {
+        println!("Error: {}", result.error.unwrap());
+        return false;
+    }
+    println!("delete droplet result: {:?}", result.data);
+    true
+}
+
+pub async fn get_snapshot_list() -> Vec<Snapshot> {
+    let result = get(SNAPSHOTS_URL, None).await;
+    if result.error.is_some() {
+        println!("Error: {}", result.error.unwrap());
+        return Vec::new();
+    }
+    println!("get snapshot list result: {:?}", result.data);
+    let data: AllSnapshotsResponse = serde_json::from_value(result.data.unwrap()).unwrap();
+
+    data.snapshots
+}
+
+pub async fn delete_snapshot(id: &str) -> bool {
+    let result = delete(&[SNAPSHOTS_URL, id].join("")).await;
+    if result.error.is_some() {
+        println!("Error: {}", result.error.unwrap());
+        return false;
+    }
+    println!("delete snapshot result: {:?}", result.data);
+    true
+}
+
+pub async fn shutdown_droplet(id: &str) -> bool {
+    let body = Action {
+        r#type: "shutdown".to_string(),
+    };
+    let result = post(
+        &[DROPLETS_URL, "/", id, "/actions"].join(""),
+        serde_json::to_string(&body).unwrap(),
+    )
+    .await;
+    if result.error.is_some() {
+        println!("Error: {}", result.error.unwrap());
+        return false;
+    }
+    println!("shutdown droplet result: {:?}", result.data);
+    true
+}
+
+pub async fn get_droplet_by_id(id: &str) -> Option<Droplet> {
+    let result = get(&[DROPLETS_URL, "/", id].join(""), None).await;
+    if result.error.is_some() {
+        println!("Error: {}", result.error.unwrap());
+        return None;
+    }
+    println!("get droplet by id result: {:?}", result.data);
+    let data: GetDropletResponse = serde_json::from_value(result.data.unwrap()).unwrap();
+    Some(data.droplet)
 }
