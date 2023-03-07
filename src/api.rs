@@ -8,14 +8,23 @@ const DELETE_DROPLET_URL: &str = "https://api.digitalocean.com/v2/droplets/";
 const SNAPSHOTS_URL: &str = "https://api.digitalocean.com/v2/snapshots";
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct CreateDropletBody {
+    pub name: String,
+    pub region: String,
+    pub size: String,
+    pub image: String,
+    pub ssh_keys: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Action {
     r#type: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Snapshot {
-    id: String,
-    name: String,
+    pub id: String,
+    pub name: String,
     created_at: String,
     regions: Vec<String>,
     resource_id: String,
@@ -31,9 +40,22 @@ struct AllSnapshotsResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct DropletNetworkV4 {
+    pub ip_address: String,
+    pub netmask: String,
+    pub gateway: String,
+    pub r#type: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DropletNetwork {
+    pub v4: Vec<DropletNetworkV4>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Droplet {
-    id: u32,
-    name: String,
+    pub id: u32,
+    pub name: String,
     memory: u32,
     vcpus: u32,
     disk: u32,
@@ -46,7 +68,7 @@ pub struct Droplet {
     volume_ids: Vec<u32>,
     size: Option<Value>,
     size_slug: String,
-    networks: Option<Value>,
+    pub networks: Option<DropletNetwork>,
     region: Option<Value>,
     tags: Vec<String>,
     vpc_uuid: Option<String>,
@@ -166,18 +188,7 @@ pub async fn get_all_droplets() -> Vec<Droplet> {
     data.droplets
 }
 
-pub async fn create_droplet() -> bool {
-    let body = DropletCreate {
-        name: var("DROPLET_NAME").expect("DROPLET_NAME not set"),
-        region: var("DROPLET_REGION").expect("DROPLET_REGION not set"),
-        size: var("DROPLET_SIZE").expect("DROPLET_SIZE not set"),
-        image: var("DO_IMAGE_ID").expect("DROPLET_IMAGE not set"),
-        ssh_keys: var("SSH_FINGERPRINT")
-            .expect("SSH_FINGERPRINT not set")
-            .split(",")
-            .map(|s| s.to_string())
-            .collect(),
-    };
+pub async fn create_droplet(body: CreateDropletBody) -> Option<Droplet> {
     let result = post(CREATE_DROPLET_URL, serde_json::to_string(&body).unwrap()).await;
     if result.error.is_some() {
         println!("Error: {}", result.error.unwrap());
@@ -186,7 +197,7 @@ pub async fn create_droplet() -> bool {
     println!("create droplet result: {:?}", result.data);
     let data: CreateDropletResponse = serde_json::from_value(result.data.unwrap()).unwrap();
     println!("{:?}", data);
-    true
+    data.droplet
 }
 
 pub async fn drop_droplet(id: &str) -> bool {
