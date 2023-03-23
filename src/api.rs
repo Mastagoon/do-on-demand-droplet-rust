@@ -6,24 +6,30 @@ const DROPLETS_URL: &str = "https://api.digitalocean.com/v2/droplets";
 const CREATE_DROPLET_URL: &str = "https://api.digitalocean.com/v2/droplets";
 const DELETE_DROPLET_URL: &str = "https://api.digitalocean.com/v2/droplets/";
 const SNAPSHOTS_URL: &str = "https://api.digitalocean.com/v2/snapshots";
+const DROPLET_ACTIONS_URL: &str = "https://api.digitalocean.com/v2/droplets/${id}/actions";
+
+fn get_droplet_actions_url(id: u32) -> String {
+    DROPLET_ACTIONS_URL.replace("${id}", &id.to_string())
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreateDropletBody {
     pub name: String,
     pub region: String,
     pub size: String,
-    pub image: String,
-    pub ssh_keys: String,
+    pub image: u32,
+    pub ssh_keys: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Action {
     r#type: String,
+    name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Snapshot {
-    pub id: String,
+    pub id: u32,
     pub name: String,
     created_at: String,
     regions: Vec<String>,
@@ -72,6 +78,12 @@ pub struct Droplet {
     region: Option<Value>,
     tags: Vec<String>,
     vpc_uuid: Option<String>,
+}
+
+impl Droplet {
+    fn copy() -> i32 {
+        return 1;
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -137,8 +149,17 @@ async fn get(url: &str, _params: Option<Vec<String>>) -> ApiResponse {
 
 async fn post(url: &str, body: String) -> ApiResponse {
     let client = reqwest::Client::new();
-    println!("POST -> {}", url);
-    let response = match client.post(url).body(body).send().await {
+    println!("POST -> {}\n{}", url, body);
+    let response = match client
+        .post(url)
+        .header(
+            "Authorization",
+            ["Bearer ", &var("DO_TOKEN").expect("DO_TOKEN not set")].join(""),
+        )
+        .body(body)
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             return ApiResponse {
@@ -149,11 +170,28 @@ async fn post(url: &str, body: String) -> ApiResponse {
         }
     };
     println!("{} <-", response.status());
-    return ApiResponse {
-        status: 200,
-        error: None,
-        data: response.json().await.ok(),
-    };
+    match response.status() {
+        reqwest::StatusCode::OK => ApiResponse {
+            status: 200,
+            error: None,
+            data: response.json().await.ok(),
+        },
+        reqwest::StatusCode::CREATED => ApiResponse {
+            status: 201,
+            error: None,
+            data: response.json().await.ok(),
+        },
+        _other => ApiResponse {
+            status: _other.as_u16() as u32,
+            error: Some(response.text().await.unwrap()),
+            data: None,
+        },
+    }
+    // return ApiResponse {
+    // status: response.status(),
+    // error: None,
+    // data: response.json().await.ok(),
+    // };
 }
 
 async fn delete(url: &str) -> ApiResponse {
@@ -192,12 +230,12 @@ pub async fn create_droplet(body: CreateDropletBody) -> Option<Droplet> {
     let result = post(CREATE_DROPLET_URL, serde_json::to_string(&body).unwrap()).await;
     if result.error.is_some() {
         println!("Error: {}", result.error.unwrap());
-        return false;
+        return None;
     }
     println!("create droplet result: {:?}", result.data);
     let data: CreateDropletResponse = serde_json::from_value(result.data.unwrap()).unwrap();
     println!("{:?}", data);
-    data.droplet
+    Some(data.droplet)
 }
 
 pub async fn drop_droplet(id: &str) -> bool {
@@ -222,8 +260,8 @@ pub async fn get_snapshot_list() -> Vec<Snapshot> {
     data.snapshots
 }
 
-pub async fn delete_snapshot(id: &str) -> bool {
-    let result = delete(&[SNAPSHOTS_URL, id].join("")).await;
+pub async fn delete_snapshot(id: String) -> bool {
+    let result = delete(&[SNAPSHOTS_URL, &id].join("")).await;
     if result.error.is_some() {
         println!("Error: {}", result.error.unwrap());
         return false;
@@ -232,12 +270,23 @@ pub async fn delete_snapshot(id: &str) -> bool {
     true
 }
 
-pub async fn shutdown_droplet(id: &str) -> bool {
+pub async fn delete_droplet(id: String) -> bool {
+    let result = delete(&[DROPLETS_URL, &id].join("")).await;
+    if result.error.is_some() {
+        println!("Error: {}", result.error.unwrap());
+        return false;
+    }
+    println!("delete snapshot result: {:?}", result.data);
+    true
+}
+
+pub async fn shutdown_droplet(id: u32) -> bool {
     let body = Action {
         r#type: "shutdown".to_string(),
+        name: None,
     };
     let result = post(
-        &[DROPLETS_URL, "/", id, "/actions"].join(""),
+        &[DROPLETS_URL, "/", &id.to_string(), "/actions"].join(""),
         serde_json::to_string(&body).unwrap(),
     )
     .await;
@@ -249,8 +298,8 @@ pub async fn shutdown_droplet(id: &str) -> bool {
     true
 }
 
-pub async fn get_droplet_by_id(id: &str) -> Option<Droplet> {
-    let result = get(&[DROPLETS_URL, "/", id].join(""), None).await;
+pub async fn get_droplet_by_id(id: u32) -> Option<Droplet> {
+    let result = get(&[DROPLETS_URL, "/", &id.to_string()].join(""), None).await;
     if result.error.is_some() {
         println!("Error: {}", result.error.unwrap());
         return None;
@@ -258,4 +307,18 @@ pub async fn get_droplet_by_id(id: &str) -> Option<Droplet> {
     println!("get droplet by id result: {:?}", result.data);
     let data: GetDropletResponse = serde_json::from_value(result.data.unwrap()).unwrap();
     Some(data.droplet)
+}
+
+pub async fn create_snapshot(droplet_id: u32) -> bool {
+    let snapshot_name = var("SNAPSHOT_NAME").expect("SNAPSHOT_NAME not set");
+    let url = get_droplet_actions_url(droplet_id);
+    let body = Action {
+        r#type: "snapshot".to_string(),
+        name: Some(snapshot_name),
+    };
+    let result = post(&url, serde_json::to_string(&body).unwrap()).await;
+    return match result.data {
+        Some(_) => true,
+        None => false,
+    };
 }
