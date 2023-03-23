@@ -1,5 +1,7 @@
 #[allow(dead_code)]
 
+const MAX_RETRIES: i32 = 5;
+
 pub enum ActionResponse {
     SUCCESS(String),
     FAIL(String),
@@ -43,37 +45,45 @@ pub async fn spawn_new_server() -> ActionResponse {
         return ActionResponse::FAIL("Failed to create server!".to_string());
     }
     let droplet_id = droplet_id.unwrap();
+    let mut err_count = 0;
     loop {
         std::thread::sleep(std::time::Duration::from_secs(20));
         println!("Waiting for IP...");
         let d = match api::get_droplet_by_id(droplet_id).await {
             Some(d) => d,
             None => {
-                return ActionResponse::FAIL("Failed to create server".to_string());
+                if err_count < MAX_RETRIES {
+                    err_count += 1;
+                    continue;
+                } else {
+                    return ActionResponse::FAIL("Failed to get server IP!".to_string());
+                }
             }
         };
         if d.networks.is_none() {
             continue;
         }
-        let ip = &d
-            .networks
-            .unwrap()
-            .v4
-            .into_iter()
-            .find(|n| n.r#type == "public")
-            .unwrap()
-            .ip_address;
+        let v4 = d.networks.unwrap().v4;
+        let network = v4.into_iter().find(|n| n.r#type == "public");
+        if network.is_none() {
+            continue;
+        }
+        let ip = network.unwrap().ip_address;
         return ActionResponse::SUCCESS(format!("Server running. IP: {}", ip));
     }
 }
 
-async fn create_droplet(snapshot_id: u32) -> Option<u32> {
+async fn create_droplet(snapshot_id: String) -> Option<u32> {
     let payload = CreateDropletBody {
         name: var("DROPLET_NAME").expect("DROPLET_NAME must be set"),
         region: var("DROPLET_REGION").expect("DROPLET_REGION must be set"),
         size: var("DROPLET_SIZE").expect("DROPLET_SIZE must be set"),
-        image: snapshot_id,
-        ssh_keys: [var("SSH_FINGERPRINT").expect("SSH_FINGERPRINT must be set")].to_vec(),
+        image: snapshot_id.parse().unwrap_or(0),
+        ssh_keys: var("SSH_FINGERPRINT")
+            .expect("SSH_FINGERPRINT must be set")
+            .split(",")
+            .map(|s| s.to_string())
+            .collect(),
     };
     let result = api::create_droplet(payload).await;
     match result {
@@ -126,7 +136,7 @@ async fn update_snapshot(droplet_id: u32) {
         if snapshots.len() > list.len() {
             if old_snapshot.is_some() {
                 let snapshot_id = &old_snapshot.unwrap().id;
-                api::delete_snapshot(snapshot_id.to_string().to_owned()).await;
+                api::delete_snapshot(snapshot_id.to_owned()).await;
             }
             break;
         }

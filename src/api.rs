@@ -29,7 +29,7 @@ pub struct Action {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Snapshot {
-    pub id: u32,
+    pub id: String,
     pub name: String,
     created_at: String,
     regions: Vec<String>,
@@ -156,6 +156,7 @@ async fn post(url: &str, body: String) -> ApiResponse {
             "Authorization",
             ["Bearer ", &var("DO_TOKEN").expect("DO_TOKEN not set")].join(""),
         )
+        .header("Content-Type", "application/json")
         .body(body)
         .send()
         .await
@@ -178,6 +179,11 @@ async fn post(url: &str, body: String) -> ApiResponse {
         },
         reqwest::StatusCode::CREATED => ApiResponse {
             status: 201,
+            error: None,
+            data: response.json().await.ok(),
+        },
+        reqwest::StatusCode::ACCEPTED => ApiResponse {
+            status: 202,
             error: None,
             data: response.json().await.ok(),
         },
