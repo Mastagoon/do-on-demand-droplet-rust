@@ -7,6 +7,8 @@ pub enum ActionResponse {
     FAIL(String),
 }
 
+use serenity::{model::prelude::Message, prelude::Context};
+
 use crate::api::{self, CreateDropletBody, Droplet};
 use std::env::var;
 
@@ -20,29 +22,38 @@ async fn is_server_up() -> Option<Droplet> {
     droplet
 }
 
-pub async fn spawn_new_server() -> ActionResponse {
+pub async fn spawn_new_server(msg: &Message, ctx: &Context) {
     let snapshot_name = var("SNAPSHOT_NAME").expect("SNAPSHOT_NAME must be set");
     let active_droplet = is_server_up().await;
     if active_droplet.is_some() {
-        println!("Server is already up");
-        return ActionResponse::FAIL("Server is already up!".to_string());
+        if let Err(why) = msg.reply(&ctx.http, "Server already exists!").await {
+            println!("Error sending message: {:?}", why);
+        };
+        return;
     }
     // find latest snapshot
     let snapshots = api::get_snapshot_list().await;
     if snapshots.is_empty() {
-        println!("No snapshots found.");
-        return ActionResponse::FAIL("No snapshots found!".to_string());
+        if let Err(why) = msg.reply(&ctx.http, "No snapshots found!").await {
+            println!("Error sending message: {:?}", why);
+        };
+        return;
     }
     let snapshot = snapshots.into_iter().find(|s| s.name == snapshot_name);
     if snapshot.is_none() {
-        println!("No snapshot found with name {}", snapshot_name);
-        return ActionResponse::FAIL("No snapshots found!".to_string());
+        if let Err(why) = msg.reply(&ctx.http, "No snapshots found!").await {
+            println!("Error sending message: {:?}", why);
+        };
+        return;
     }
     // create new droplet
     let id = snapshot.unwrap().id;
     let droplet_id = create_droplet(id).await;
     if droplet_id.is_none() {
-        return ActionResponse::FAIL("Failed to create server!".to_string());
+        if let Err(why) = msg.reply(&ctx.http, "Failed to create droplet!").await {
+            println!("Error sending message: {:?}", why);
+        };
+        return;
     }
     let droplet_id = droplet_id.unwrap();
     let mut err_count = 0;
@@ -56,7 +67,13 @@ pub async fn spawn_new_server() -> ActionResponse {
                     err_count += 1;
                     continue;
                 } else {
-                    return ActionResponse::FAIL("Failed to get server IP!".to_string());
+                    if let Err(why) = msg
+                        .reply(&ctx.http, "Failed to get droplet after max retries!")
+                        .await
+                    {
+                        println!("Error sending message: {:?}", why);
+                    };
+                    return;
                 }
             }
         };
@@ -69,7 +86,12 @@ pub async fn spawn_new_server() -> ActionResponse {
             continue;
         }
         let ip = network.unwrap().ip_address;
-        return ActionResponse::SUCCESS(format!("Server running. IP: {}", ip));
+        if let Err(why) = msg
+            .reply(&ctx.http, format!("Server is up! IP: {}", ip))
+            .await
+        {
+            println!("Error sending message: {:?}", why);
+        };
     }
 }
 
@@ -98,27 +120,47 @@ async fn create_droplet(snapshot_id: String) -> Option<u32> {
     }
 }
 
-pub async fn kill_server() {
-    // get servero
+pub async fn kill_server(msg: &Message, ctx: &Context) {
     let droplet = is_server_up().await;
     if droplet.is_none() {
-        println!("Server is already down");
+        if let Err(why) = msg.reply(&ctx.http, "Server does not exist!").await {
+            println!("Error sending message: {:?}", why);
+        };
         return;
     };
     let droplet = droplet.unwrap();
     // shutdown
     let shutdown_result = api::shutdown_droplet(droplet.id).await;
     if !shutdown_result {
-        println!("Shutdown failed.");
+        if let Err(why) = msg.reply(&ctx.http, "Failed to shutdown droplet!").await {
+            println!("Error sending message: {:?}", why);
+        };
         return;
     };
     // take snapshot
-    update_snapshot(droplet.id).await;
-    api::delete_droplet(droplet.id.to_string()).await;
-    println!("Server killed.");
+    let result = update_snapshot(droplet.id).await;
+    if !result {
+        if let Err(why) = msg
+            .reply(&ctx.http, "Failed to take snapshot! Exiting.")
+            .await
+        {
+            println!("Error sending message: {:?}", why);
+        };
+        return;
+    };
+    let result = api::delete_droplet(droplet.id.to_string()).await;
+    if !result {
+        if let Err(why) = msg.reply(&ctx.http, "Failed to delete droplet!").await {
+            println!("Error sending message: {:?}", why);
+        };
+        return;
+    };
+    if let Err(why) = msg.reply(&ctx.http, "Server killed!").await {
+        println!("Error sending message: {:?}", why);
+    };
 }
 
-async fn update_snapshot(droplet_id: u32) {
+async fn update_snapshot(droplet_id: u32) -> bool {
     let list = api::get_snapshot_list().await;
     let name = var("SNAPSHOT_NAME").expect("SNAPSHOT_NAME must be set");
     let old_snapshot = list.iter().find(|s| s.name == name);
@@ -126,7 +168,7 @@ async fn update_snapshot(droplet_id: u32) {
     let create_snapshot_result = api::create_snapshot(droplet_id).await;
     if !create_snapshot_result {
         println!("Snapshot failed.");
-        return;
+        return false;
     };
     loop {
         std::thread::sleep(std::time::Duration::from_secs(20));
@@ -138,7 +180,7 @@ async fn update_snapshot(droplet_id: u32) {
                 let snapshot_id = &old_snapshot.unwrap().id;
                 api::delete_snapshot(snapshot_id.to_owned()).await;
             }
-            break;
+            break true;
         }
     }
 }

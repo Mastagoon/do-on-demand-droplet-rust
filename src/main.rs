@@ -2,7 +2,6 @@
 mod actions;
 mod api;
 
-use actions::ActionResponse;
 use dotenv::dotenv;
 use serenity::async_trait;
 use serenity::model::channel::Message;
@@ -15,22 +14,30 @@ struct Handler;
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.content == "!create" {
-            if let Err(why) = msg.channel_id.say(&ctx.http, "Creating server...").await {
+            if let Err(why) = msg
+                .channel_id
+                .say(
+                    &ctx.http,
+                    "Creating server...\nThis process might take a few minutes.",
+                )
+                .await
+            {
                 println!("Error sending message: {:?}", why);
             }
-            let result = actions::spawn_new_server().await;
-            match result {
-                ActionResponse::SUCCESS(s) => {
-                    if let Err(why) = msg.channel_id.say(&ctx.http, s).await {
-                        println!("Error sending message: {:?}", why);
-                    }
-                }
-                ActionResponse::FAIL(s) => {
-                    if let Err(why) = msg.channel_id.say(&ctx.http, s).await {
-                        println!("Error sending message: {:?}", why);
-                    }
-                }
+            actions::spawn_new_server(&msg, &ctx).await;
+        }
+
+        if msg.content == "!destroy" {
+            if let Err(why) = msg
+                .reply(
+                    &ctx.http,
+                    "Destroying server...\nThis process might take a few minutes.",
+                )
+                .await
+            {
+                println!("Error sending message: {:?}", why);
             }
+            actions::kill_server(&msg, &ctx).await
         }
     }
 

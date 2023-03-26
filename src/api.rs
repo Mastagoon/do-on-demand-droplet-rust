@@ -4,9 +4,10 @@ use std::env::var;
 
 const DROPLETS_URL: &str = "https://api.digitalocean.com/v2/droplets";
 const CREATE_DROPLET_URL: &str = "https://api.digitalocean.com/v2/droplets";
-const DELETE_DROPLET_URL: &str = "https://api.digitalocean.com/v2/droplets/";
 const SNAPSHOTS_URL: &str = "https://api.digitalocean.com/v2/snapshots";
 const DROPLET_ACTIONS_URL: &str = "https://api.digitalocean.com/v2/droplets/${id}/actions";
+
+const DEBUG: bool = true;
 
 fn get_droplet_actions_url(id: u32) -> String {
     DROPLET_ACTIONS_URL.replace("${id}", &id.to_string())
@@ -80,12 +81,6 @@ pub struct Droplet {
     vpc_uuid: Option<String>,
 }
 
-impl Droplet {
-    fn copy() -> i32 {
-        return 1;
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 struct GetDropletResponse {
     droplet: Droplet,
@@ -111,14 +106,15 @@ struct CreateDropletResponse {
 }
 
 struct ApiResponse {
-    status: u32,
     error: Option<String>,
     data: Option<Value>,
 }
 
 async fn get(url: &str, _params: Option<Vec<String>>) -> ApiResponse {
     let client = reqwest::Client::new();
-    println!("GET -> {}", url);
+    if DEBUG {
+        println!("GET {}", url);
+    }
     let response = match client
         .get(url)
         .header(
@@ -131,17 +127,17 @@ async fn get(url: &str, _params: Option<Vec<String>>) -> ApiResponse {
         Ok(r) => r,
         Err(e) => {
             return ApiResponse {
-                status: 500,
                 error: Some(e.to_string()),
                 data: None,
             }
         }
     };
 
-    println!("{} <-", response.status());
+    if DEBUG {
+        println!("Response: {}", response.status());
+    }
 
     ApiResponse {
-        status: 200,
         error: None,
         data: response.json().await.ok(),
     }
@@ -149,7 +145,9 @@ async fn get(url: &str, _params: Option<Vec<String>>) -> ApiResponse {
 
 async fn post(url: &str, body: String) -> ApiResponse {
     let client = reqwest::Client::new();
-    println!("POST -> {}\n{}", url, body);
+    if DEBUG {
+        println!("POST -> {}\n{}", url, body);
+    }
     let response = match client
         .post(url)
         .header(
@@ -164,61 +162,78 @@ async fn post(url: &str, body: String) -> ApiResponse {
         Ok(r) => r,
         Err(e) => {
             return ApiResponse {
-                status: 500,
                 error: Some(e.to_string()),
                 data: None,
             }
         }
     };
-    println!("{} <-", response.status());
+    if DEBUG {
+        println!("{} <-", response.status());
+    }
     match response.status() {
         reqwest::StatusCode::OK => ApiResponse {
-            status: 200,
             error: None,
             data: response.json().await.ok(),
         },
         reqwest::StatusCode::CREATED => ApiResponse {
-            status: 201,
             error: None,
             data: response.json().await.ok(),
         },
         reqwest::StatusCode::ACCEPTED => ApiResponse {
-            status: 202,
             error: None,
             data: response.json().await.ok(),
         },
         _other => ApiResponse {
-            status: _other.as_u16() as u32,
             error: Some(response.text().await.unwrap()),
             data: None,
         },
     }
-    // return ApiResponse {
-    // status: response.status(),
-    // error: None,
-    // data: response.json().await.ok(),
-    // };
 }
 
 async fn delete(url: &str) -> ApiResponse {
     let client = reqwest::Client::new();
-    println!("DELETE -> {}", url);
-    let response = match client.delete(url).send().await {
+    if DEBUG {
+        println!("DELETE {}", url);
+    }
+    let response = match client
+        .delete(url)
+        .header(
+            "Authorization",
+            ["Bearer ", &var("DO_TOKEN").expect("DO_TOKEN not set")].join(""),
+        )
+        .header("Content-Type", "application/json")
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             return ApiResponse {
-                status: 500,
                 error: Some(e.to_string()),
                 data: None,
             }
         }
     };
-    println!("{} <-", response.status());
-    return ApiResponse {
-        status: 200,
-        error: None,
-        data: response.json().await.ok(),
-    };
+    if DEBUG {
+        println!("{} <-", response.status());
+    }
+    match response.status() {
+        reqwest::StatusCode::OK => ApiResponse {
+            error: None,
+            data: response.json().await.ok(),
+        },
+        reqwest::StatusCode::CREATED => ApiResponse {
+            error: None,
+            data: response.json().await.ok(),
+        },
+        reqwest::StatusCode::ACCEPTED => ApiResponse {
+            error: None,
+            data: response.json().await.ok(),
+        },
+        _other => ApiResponse {
+            error: Some(response.text().await.unwrap()),
+            data: None,
+        },
+    }
 }
 
 pub async fn get_all_droplets() -> Vec<Droplet> {
@@ -242,16 +257,6 @@ pub async fn create_droplet(body: CreateDropletBody) -> Option<Droplet> {
     let data: CreateDropletResponse = serde_json::from_value(result.data.unwrap()).unwrap();
     println!("{:?}", data);
     Some(data.droplet)
-}
-
-pub async fn drop_droplet(id: &str) -> bool {
-    let result = delete(&[DELETE_DROPLET_URL, id].join("")).await;
-    if result.error.is_some() {
-        println!("Error: {}", result.error.unwrap());
-        return false;
-    }
-    println!("delete droplet result: {:?}", result.data);
-    true
 }
 
 pub async fn get_snapshot_list() -> Vec<Snapshot> {
