@@ -272,7 +272,7 @@ pub async fn get_snapshot_list() -> Vec<Snapshot> {
 }
 
 pub async fn delete_snapshot(id: String) -> bool {
-    let result = delete(&[SNAPSHOTS_URL, &id].join("")).await;
+    let result = delete(&[SNAPSHOTS_URL, "/", &id].join("")).await;
     if result.error.is_some() {
         println!("Error: {}", result.error.unwrap());
         return false;
@@ -282,7 +282,7 @@ pub async fn delete_snapshot(id: String) -> bool {
 }
 
 pub async fn delete_droplet(id: String) -> bool {
-    let result = delete(&[DROPLETS_URL, &id].join("")).await;
+    let result = delete(&[DROPLETS_URL, "/", &id].join("")).await;
     if result.error.is_some() {
         println!("Error: {}", result.error.unwrap());
         return false;
