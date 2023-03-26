@@ -1,4 +1,4 @@
-# Minecraft on-demand discord Bot
+# Minecraft on-demand server
 
 A simple discord bot that creates and deletes a minecraft server using digital ocean's API (built in rust btw).
 
