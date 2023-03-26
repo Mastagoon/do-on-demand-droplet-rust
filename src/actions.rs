@@ -92,6 +92,7 @@ pub async fn spawn_new_server(msg: &Message, ctx: &Context) {
         {
             println!("Error sending message: {:?}", why);
         };
+        break;
     }
 }
 
